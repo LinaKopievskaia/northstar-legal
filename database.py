@@ -1,6 +1,8 @@
 import sqlite3
+import re
+from pathlib import Path
 
-DB_NAME = "northstar.db"
+DB_NAME = Path(__file__).resolve().with_name("northstar.db")
 
 
 def get_connection():
@@ -221,3 +223,93 @@ def update_request_status(
 
     conn.commit()
     conn.close()
+
+
+def get_triage(request):
+    text = (
+        f"{request.get('category', '')} "
+        f"{request.get('description', '')}"
+    ).lower()
+
+    risk_level = "Low"
+    suggested_priority = "Normal"
+    legal_team = request.get("category") or "General Legal"
+    next_action = "Legal should review the request and confirm next steps."
+
+    high_risk_terms = [
+        "breach",
+        "security incident",
+        "government",
+        "subpoena",
+        "lawsuit",
+        "litigation",
+        "termination",
+        "personal data",
+        "customer data",
+        "employee data",
+    ]
+
+    medium_risk_terms = [
+        "vendor",
+        "contract",
+        "agreement",
+        "ai",
+        "privacy",
+        "data",
+        "launch",
+    ]
+
+    def contains_any(terms):
+        return any(
+            re.search(rf"\b{re.escape(term)}\b", text)
+            for term in terms
+        )
+
+    if contains_any(high_risk_terms):
+        risk_level = "High"
+        suggested_priority = "High"
+
+    elif contains_any(medium_risk_terms):
+        risk_level = "Medium"
+
+    if request.get("priority") in {"High", "Urgency flagged"}:
+        suggested_priority = "High"
+
+    category = request.get("category")
+
+    if category == "Privacy & Data":
+        next_action = (
+            "Identify the personal data involved, the purpose of processing, "
+            "and whether a privacy review or DPIA is required."
+        )
+
+    elif category == "Product & AI":
+        next_action = (
+            "Review the product use case, data flows, AI risks, "
+            "and applicable product or privacy requirements."
+        )
+
+    elif category == "Vendors & Procurement":
+        next_action = (
+            "Review the vendor agreement, data access, security requirements, "
+            "and whether a privacy or security assessment is needed."
+        )
+
+    elif category == "Contracts & Commercial":
+        next_action = (
+            "Review the agreement, identify material deviations, "
+            "and confirm the business deadline and deal context."
+        )
+
+    elif category == "Security & Incidents":
+        next_action = (
+            "Escalate for legal and security review and preserve "
+            "relevant incident information."
+        )
+
+    return {
+        "risk_level": risk_level,
+        "suggested_priority": suggested_priority,
+        "legal_team": legal_team,
+        "next_action": next_action,
+    }

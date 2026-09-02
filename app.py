@@ -8,6 +8,7 @@ from database import (
     get_request,
     create_request,
     update_request_status,
+    get_triage,
 )
 
 st.set_page_config(
@@ -32,6 +33,9 @@ if "page" not in st.session_state:
 
 if "selected_request_id" not in st.session_state:
     st.session_state.selected_request_id = None
+
+if "submitted_request_id" not in st.session_state:
+    st.session_state.submitted_request_id = None
 
 
 # -----------------------------
@@ -389,13 +393,19 @@ elif st.session_state.page == "ask_legal":
             )
 
             st.session_state.selected_request_id = request_id
+            st.session_state.submitted_request_id = request_id
 
-            st.success(
-                f"{request_id} was submitted successfully."
-            )
+    if st.session_state.submitted_request_id:
+        submitted_request_id = st.session_state.submitted_request_id
 
-            if st.button("View new request"):
-                go_to("request_details")
+        st.success(
+            f"{submitted_request_id} was submitted successfully."
+        )
+
+        if st.button("View new request"):
+            st.session_state.selected_request_id = submitted_request_id
+            st.session_state.submitted_request_id = None
+            go_to("request_details")
 
 
 # -----------------------------
@@ -541,6 +551,35 @@ elif st.session_state.page == "request_details":
         st.write(
             f"**Sensitive:** {request['sensitive']}"
         )
+
+        st.divider()
+
+        triage = get_triage(request)
+
+        st.subheader("AI Triage")
+
+        triage_col1, triage_col2, triage_col3 = st.columns(3)
+
+        with triage_col1:
+            st.metric(
+                "Risk level",
+                triage["risk_level"]
+            )
+
+        with triage_col2:
+            st.metric(
+                "Suggested priority",
+                triage["suggested_priority"]
+            )
+
+        with triage_col3:
+            st.metric(
+                "Legal team",
+                triage["legal_team"]
+            )
+
+        st.markdown("**Recommended next action**")
+        st.write(triage["next_action"])
 
         st.divider()
 
