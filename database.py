@@ -33,6 +33,19 @@ def init_db():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS request_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL,
+            activity_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (request_id) REFERENCES legal_requests (request_id)
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
 
@@ -41,50 +54,145 @@ def seed_demo_data():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM legal_requests"
-    )
-
-    count = cursor.fetchone()[0]
-
-    if count == 0:
-        demo_requests = [
-            (
-                "LEGAL-0071",
-                "Contracts & Commercial",
-                "Microsoft customer agreement",
-                "Review Microsoft customer agreement.",
-                "Information Needed",
-                "September 4",
-                "High",
-                1,
-                "No",
+    demo_requests = [
+        {
+            "request_id": "LEGAL-0101",
+            "category": "Product & AI",
+            "title": "Review AI meeting transcription vendor",
+            "description": (
+                "Business wants to use an AI transcription tool that will "
+                "process employee meeting audio and notes."
             ),
-            (
-                "LEGAL-0064",
-                "Vendors & Procurement",
-                "Vendor security review",
-                "Review a new vendor.",
-                "Under Review",
-                "September 6",
-                "Normal",
-                1,
-                "No",
+            "status": "Under Review",
+            "priority": "High",
+            "action_needed": 0,
+            "activities": [
+                ("request_created", "Request submitted."),
+                (
+                    "status_changed",
+                    "Status changed from Received to Under Review."
+                ),
+                ("review_started", "Legal started the vendor review."),
+            ],
+        },
+        {
+            "request_id": "LEGAL-0102",
+            "category": "Privacy & Data",
+            "title": "New customer analytics feature",
+            "description": (
+                "Product team wants to introduce analytics that collect user "
+                "behavior and device information."
             ),
-            (
-                "LEGAL-0062",
-                "IP & Brand",
-                "Marketing customer quote",
-                "Approval to use customer quote.",
-                "Completed",
-                "",
-                "Normal",
-                0,
-                "No",
+            "status": "Information Needed",
+            "priority": "Normal",
+            "action_needed": 1,
+            "activities": [
+                ("request_created", "Request submitted."),
+                (
+                    "status_changed",
+                    "Status changed from Received to Information Needed."
+                ),
+                (
+                    "information_requested",
+                    "Legal requested additional information about data flows."
+                ),
+            ],
+        },
+        {
+            "request_id": "LEGAL-0103",
+            "category": "Contracts & Commercial",
+            "title": "Enterprise SaaS agreement",
+            "description": (
+                "Sales needs review of a customer agreement with liability "
+                "and data protection terms."
             ),
-        ]
+            "status": "Received",
+            "priority": "High",
+            "action_needed": 0,
+            "activities": [
+                ("request_created", "Request submitted."),
+            ],
+        },
+        {
+            "request_id": "LEGAL-0104",
+            "category": "IP & Brand",
+            "title": "Customer testimonial approval",
+            "description": (
+                "Marketing wants to publish a customer quote and logo on the "
+                "company website."
+            ),
+            "status": "Completed",
+            "priority": "Normal",
+            "action_needed": 0,
+            "activities": [
+                ("request_created", "Request submitted."),
+                (
+                    "status_changed",
+                    "Status changed from Received to Under Review."
+                ),
+                (
+                    "status_changed",
+                    "Status changed from Under Review to Completed."
+                ),
+            ],
+        },
+        {
+            "request_id": "LEGAL-0105",
+            "category": "Security & Incidents",
+            "title": "Potential customer data exposure",
+            "description": (
+                "Security identified a configuration issue that may have "
+                "exposed limited customer information."
+            ),
+            "status": "Under Review",
+            "priority": "High",
+            "action_needed": 0,
+            "activities": [
+                ("request_created", "Request submitted."),
+                (
+                    "status_changed",
+                    "Status changed from Received to Under Review."
+                ),
+                ("review_started", "Legal and Security started incident review."),
+            ],
+        },
+        {
+            "request_id": "LEGAL-0106",
+            "category": "Vendors & Procurement",
+            "title": "New cloud storage provider",
+            "description": (
+                "Operations wants to onboard a cloud storage vendor that will "
+                "handle internal company documents."
+            ),
+            "status": "Received",
+            "priority": "Normal",
+            "action_needed": 0,
+            "activities": [
+                ("request_created", "Request submitted."),
+            ],
+        },
+    ]
 
-        cursor.executemany(
+    for demo in demo_requests:
+        cursor.execute(
+            "SELECT 1 FROM legal_requests WHERE title = ? LIMIT 1",
+            (demo["title"],)
+        )
+
+        if cursor.fetchone():
+            continue
+
+        request_id = demo["request_id"]
+        request_number = int(request_id.split("-")[-1])
+
+        while cursor.execute(
+            "SELECT 1 FROM legal_requests WHERE request_id = ?",
+            (request_id,)
+        ).fetchone():
+            request_number += 1
+            request_id = f"LEGAL-{request_number:04d}"
+
+        cursor.execute(
             """
             INSERT INTO legal_requests (
                 request_id,
@@ -99,8 +207,26 @@ def seed_demo_data():
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            demo_requests
+            (
+                request_id,
+                demo["category"],
+                demo["title"],
+                demo["description"],
+                demo["status"],
+                "",
+                demo["priority"],
+                demo["action_needed"],
+                "No",
+            )
         )
+
+        for activity_type, description in demo["activities"]:
+            _insert_activity(
+                cursor,
+                request_id,
+                activity_type,
+                description
+            )
 
     conn.commit()
     conn.close()
@@ -144,6 +270,60 @@ def get_request(request_id):
         return dict(row)
 
     return None
+
+
+def create_activity(request_id, activity_type, description):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    _insert_activity(
+        cursor,
+        request_id,
+        activity_type,
+        description
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_request_activity(request_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM request_activity
+        WHERE request_id = ?
+        ORDER BY created_at ASC, id ASC
+        """,
+        (request_id,)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def _insert_activity(
+    cursor,
+    request_id,
+    activity_type,
+    description
+):
+    cursor.execute(
+        """
+        INSERT INTO request_activity (
+            request_id,
+            activity_type,
+            description
+        )
+        VALUES (?, ?, ?)
+        """,
+        (request_id, activity_type, description)
+    )
 
 
 def create_request(
@@ -194,6 +374,13 @@ def create_request(
         )
     )
 
+    _insert_activity(
+        cursor,
+        request_id,
+        "request_created",
+        "Request submitted."
+    )
+
     conn.commit()
     conn.close()
 
@@ -210,6 +397,23 @@ def update_request_status(
 
     cursor.execute(
         """
+        SELECT status
+        FROM legal_requests
+        WHERE request_id = ?
+        """,
+        (request_id,)
+    )
+
+    row = cursor.fetchone()
+
+    if row is None:
+        conn.close()
+        return False
+
+    previous_status = row["status"]
+
+    cursor.execute(
+        """
         UPDATE legal_requests
         SET status = ?, action_needed = ?
         WHERE request_id = ?
@@ -221,8 +425,78 @@ def update_request_status(
         )
     )
 
+    if previous_status != status:
+        _insert_activity(
+            cursor,
+            request_id,
+            "status_changed",
+            f"Status changed from {previous_status} to {status}."
+        )
+
     conn.commit()
     conn.close()
+
+    return True
+
+
+def submit_requester_response(request_id, response):
+    response = response.strip()
+
+    if not response:
+        return False
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT status
+        FROM legal_requests
+        WHERE request_id = ?
+        """,
+        (request_id,)
+    )
+
+    row = cursor.fetchone()
+
+    if row is None or row["status"] != "Information Needed":
+        conn.close()
+        return False
+
+    _insert_activity(
+        cursor,
+        request_id,
+        "requester_response",
+        response
+    )
+
+    cursor.execute(
+        """
+        UPDATE legal_requests
+        SET status = ?, action_needed = ?
+        WHERE request_id = ?
+        """,
+        ("Under Review", 0, request_id)
+    )
+
+    _insert_activity(
+        cursor,
+        request_id,
+        "status_changed",
+        "Status changed from Information Needed to Under Review."
+    )
+
+    _insert_activity(
+        cursor,
+        request_id,
+        "information_provided",
+        "Requester provided additional information."
+    )
+
+    conn.commit()
+    conn.close()
+
+    return True
 
 
 def get_triage(request):

@@ -7,9 +7,20 @@ from database import (
     get_all_requests,
     get_request,
     create_request,
+    create_activity,
     update_request_status,
+    submit_requester_response,
+    get_request_activity,
     get_triage,
 )
+
+REQUEST_STATUSES = [
+    "Received",
+    "Under Review",
+    "Information Needed",
+    "In Progress",
+    "Completed",
+]
 
 st.set_page_config(
     page_title="Northstar Legal",
@@ -53,6 +64,30 @@ def open_request(request_id):
     st.rerun()
 
 
+def render_request_summary_card(request, key_prefix):
+    with st.container(border=True):
+        left, right = st.columns([4, 1])
+
+        with left:
+            st.markdown(
+                f"**{request['request_id']} — {request['title']}**"
+            )
+
+            details = request["status"]
+
+            if request["deadline"]:
+                details += f" · Deadline: {request['deadline']}"
+
+            st.caption(details)
+
+        with right:
+            if st.button(
+                "Open",
+                key=f"{key_prefix}_{request['request_id']}"
+            ):
+                open_request(request["request_id"])
+
+
 # -----------------------------
 # SIDEBAR
 # -----------------------------
@@ -85,24 +120,49 @@ if st.session_state.page == "home":
     requests = get_all_requests()
 
     st.title("Northstar Legal")
+    st.caption("A centralized legal intake and workflow platform.")
 
-    st.write(
-        "Get help from Legal, track your requests, "
-        "and access approved documents."
+    open_request_count = sum(
+        request["status"] != "Completed"
+        for request in requests
     )
-
-    if st.button("➕ Ask Legal", type="primary"):
-        go_to("ask_legal")
-
-    st.divider()
-
-    st.subheader("Needs your attention")
 
     attention_requests = [
         request
         for request in requests
         if request["action_needed"] == 1
     ]
+
+    completed_request_count = sum(
+        request["status"] == "Completed"
+        for request in requests
+    )
+
+    open_col, attention_col, completed_col = st.columns(3)
+
+    with open_col:
+        st.metric("Open Requests", open_request_count)
+
+    with attention_col:
+        st.metric("Needs Attention", len(attention_requests))
+
+    with completed_col:
+        st.metric("Completed", completed_request_count)
+
+    if st.button("Create Request", type="primary"):
+        go_to("ask_legal")
+
+    st.header("Recent Requests", divider=True)
+
+    recent_requests = requests[:3]
+
+    if not recent_requests:
+        st.info("No requests have been submitted yet.")
+
+    for request in recent_requests:
+        render_request_summary_card(request, "recent")
+
+    st.header("Needs Your Attention", divider=True)
 
     if not attention_requests:
         st.success("Nothing needs your attention right now.")
@@ -138,37 +198,10 @@ if st.session_state.page == "home":
             ):
                 open_request(request["request_id"])
 
-    st.divider()
-
-    st.subheader("Your requests")
+    st.header("All Requests", divider=True)
 
     for request in requests:
-        with st.container(border=True):
-
-            left, right = st.columns([4, 1])
-
-            with left:
-                st.markdown(
-                    f"**{request['request_id']} — {request['title']}**"
-                )
-
-                details = request["status"]
-
-                if request["deadline"]:
-                    details += (
-                        f" · Deadline: {request['deadline']}"
-                    )
-
-                st.caption(details)
-
-            with right:
-                if st.button(
-                    "Open",
-                    key=f"open_{request['request_id']}"
-                ):
-                    open_request(
-                        request["request_id"]
-                    )
+        render_request_summary_card(request, "open")
 
 
 # -----------------------------
@@ -427,13 +460,7 @@ elif st.session_state.page == "my_requests":
 
     status_filter = st.selectbox(
         "Status",
-        [
-            "All",
-            "Received",
-            "Under Review",
-            "Information Needed",
-            "Completed",
-        ]
+        ["All", *REQUEST_STATUSES]
     )
 
     for request in requests:
@@ -508,136 +535,178 @@ elif st.session_state.page == "request_details":
         if st.button("← Back"):
             go_to("home")
 
-        st.caption(
-            request["request_id"]
-        )
+        st.caption(request["request_id"])
+        st.title(request["title"])
 
-        st.title(
-            request["title"]
-        )
+        if st.session_state.pop("status_update_success", None) == request_id:
+            st.success("Request status updated successfully.")
 
-        col1, col2, col3 = st.columns(3)
+        if st.session_state.pop("response_submitted", None) == request_id:
+            st.success("Your response was submitted to Legal.")
 
-        with col1:
-            st.metric(
-                "Status",
-                request["status"]
-            )
+        st.header("Request Overview", divider=True)
 
-        with col2:
-            st.metric(
-                "Priority",
-                request["priority"]
-            )
+        with st.container(border=True):
+            status_col, priority_col, deadline_col = st.columns(3)
 
-        with col3:
-            st.metric(
-                "Deadline",
-                request["deadline"] or "None"
-            )
+            with status_col:
+                st.metric("Status", request["status"])
 
-        st.divider()
+            with priority_col:
+                st.metric("Priority", request["priority"])
 
-        st.subheader("Request")
+            with deadline_col:
+                st.metric("Deadline", request["deadline"] or "None")
 
-        st.write(
-            f"**Category:** {request['category']}"
-        )
-
-        st.write(
-            request["description"]
-        )
-
-        st.write(
-            f"**Sensitive:** {request['sensitive']}"
-        )
-
-        st.divider()
+            st.markdown(f"**Category**  \n{request['category']}")
+            st.markdown(f"**Description**  \n{request['description']}")
+            st.caption(f"Sensitive information: {request['sensitive']}")
 
         triage = get_triage(request)
 
-        st.subheader("AI Triage")
+        st.header("AI Triage", divider=True)
 
-        triage_col1, triage_col2, triage_col3 = st.columns(3)
+        with st.container(border=True):
+            risk_col, suggested_col, team_col = st.columns(3)
 
-        with triage_col1:
-            st.metric(
-                "Risk level",
-                triage["risk_level"]
+            with risk_col:
+                st.metric("Risk Level", triage["risk_level"])
+
+            with suggested_col:
+                st.metric("Suggested Priority", triage["suggested_priority"])
+
+            with team_col:
+                st.metric("Legal Team", triage["legal_team"])
+
+            st.markdown("**Recommended Next Action**")
+            st.write(triage["next_action"])
+
+        st.header("Status Management", divider=True)
+
+        with st.container(border=True):
+            selected_status = st.selectbox(
+                "Request status",
+                REQUEST_STATUSES,
+                index=REQUEST_STATUSES.index(request["status"]),
+                key=f"status_{request_id}",
             )
 
-        with triage_col2:
-            st.metric(
-                "Suggested priority",
-                triage["suggested_priority"]
+            if st.button(
+                "Update Status",
+                key=f"update_status_{request_id}",
+                type="primary"
+            ):
+                updated = update_request_status(
+                    request_id,
+                    selected_status,
+                    int(selected_status == "Information Needed"),
+                )
+
+                if updated:
+                    st.session_state.status_update_success = request_id
+                    st.rerun()
+                else:
+                    st.error("The request could not be found.")
+
+        st.header("Legal Comments", divider=True)
+
+        with st.container(border=True):
+            if st.session_state.pop("comment_posted", None) == request_id:
+                st.success("Comment posted.")
+
+            if st.session_state.pop("information_requested", None) == request_id:
+                st.success("Additional information requested.")
+
+            with st.form(
+                f"legal_comment_{request_id}",
+                clear_on_submit=True
+            ):
+                comment = st.text_area("Add a comment")
+                post_comment = st.form_submit_button("Post Comment")
+
+            if post_comment:
+                comment_text = comment.strip()
+
+                if comment_text:
+                    create_activity(
+                        request_id,
+                        "comment",
+                        comment_text
+                    )
+                    st.session_state.comment_posted = request_id
+                    st.rerun()
+                else:
+                    st.error("Please enter a comment before posting.")
+
+            if st.button(
+                "Request Information",
+                key=f"request_information_{request_id}"
+            ):
+                updated = update_request_status(
+                    request_id,
+                    "Information Needed",
+                    1
+                )
+
+                if updated:
+                    create_activity(
+                        request_id,
+                        "information_requested",
+                        "Legal requested additional information."
+                    )
+                    st.session_state.information_requested = request_id
+                    st.session_state.pop(f"status_{request_id}", None)
+                    st.rerun()
+                else:
+                    st.error("The request could not be found.")
+
+        st.header("Messages", divider=True)
+
+        with st.container(border=True):
+            st.text_area(
+                "Message Legal",
+                placeholder="Write a message...",
+                key=f"message_{request['request_id']}"
             )
 
-        with triage_col3:
-            st.metric(
-                "Legal team",
-                triage["legal_team"]
-            )
-
-        st.markdown("**Recommended next action**")
-        st.write(triage["next_action"])
-
-        st.divider()
-
-        st.subheader("Activity")
+            if st.button("Send message"):
+                st.success(
+                    "Message added to the matter."
+                )
 
         if request["status"] == "Information Needed":
+            st.header("Requested Information", divider=True)
 
-            st.warning(
-                "Legal requested additional information."
-            )
+            with st.container(border=True):
+                st.subheader("Provide Requested Information")
 
-            response = st.text_area(
-                "Your response"
-            )
+                with st.form(
+                    f"requester_response_{request_id}",
+                    clear_on_submit=True
+                ):
+                    response = st.text_area("Your response")
+                    submit_response = st.form_submit_button("Submit Response")
 
-            response_file = st.file_uploader(
-                "Upload requested documents",
-                key=f"response_{request['request_id']}"
-            )
+                if submit_response:
+                    response_text = response.strip()
 
-            if st.button("Send response"):
+                    if not response_text:
+                        st.error("Please enter a response before submitting.")
+                    elif submit_requester_response(request_id, response_text):
+                        st.session_state.response_submitted = request_id
+                        st.session_state.pop(f"status_{request_id}", None)
+                        st.rerun()
+                    else:
+                        st.error("The response could not be submitted.")
 
-                if response.strip() or response_file:
+        st.header("Activity", divider=True)
 
-                    update_request_status(
-                        request["request_id"],
-                        "Under Review",
-                        0
-                    )
+        activity = get_request_activity(request_id)
 
-                    st.success(
-                        "Your response was sent to Legal."
-                    )
-
-                    st.rerun()
-
-                else:
-                    st.error(
-                        "Please add a response or upload a document."
-                    )
-
+        if activity:
+            for entry in activity:
+                with st.container(border=True):
+                    st.caption(entry["created_at"])
+                    st.write(entry["description"])
         else:
-
-            st.info(
-                "There are no actions required from you right now."
-            )
-
-        st.divider()
-
-        st.subheader("Messages")
-
-        st.text_area(
-            "Message Legal",
-            placeholder="Write a message...",
-            key=f"message_{request['request_id']}"
-        )
-
-        if st.button("Send message"):
-            st.success(
-                "Message added to the matter."
-            )
+            st.info("No activity has been recorded for this request yet.")
